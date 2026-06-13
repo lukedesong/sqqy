@@ -67,6 +67,9 @@ def summarize_items(items: list[dict[str, Any]]) -> dict[int, str]:
     prompt = (
         "你是每日热榜归档助手。只根据给定 title 和 text 写中文摘要，不能补充材料外事实。"
         "每条摘要不超过30个中文字符；text为空时必须在摘要末尾加(仅据标题)。"
+        "硬规则：标题里如果带信息源/归因，比如 X says、according to X、据X、X称、X报道，"
+        "摘要必须保留这个源头；不能删掉归因，不能把某方说法写成既成事实。"
+        "例：U.S.-Iran peace deal could be finalized within 24 hours, Pakistan says -> 巴基斯坦称美伊或24h内敲定。"
         "不确定就写(标题已自解释)。只输出JSON对象，键为id字符串，值为摘要。\n"
         + json.dumps(payload, ensure_ascii=False)
     )
