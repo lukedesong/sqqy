@@ -56,25 +56,43 @@ def fetch_text(url: str, limit: int = 5000) -> str:
         return ""
 
 
-def compact_title(title: str) -> str:
-    title = re.sub(r"\s+", " ", title).strip()
-    title = re.sub(r"^(Show HN:|Ask HN:|Launch HN:)\s*", "", title, flags=re.I)
-    return title[:48]
+def summarize_items(items: list[dict[str, Any]]) -> dict[int, str]:
+    payload = []
+    for idx, item in enumerate(items, start=1):
+        title = str(item.get("keyword") or "").strip()
+        url = str(item.get("url") or "").strip()
+        text = fetch_text(url)
+        payload.append({"id": idx, "title": title, "text": text[:1200], "readable": bool(text)})
+
+    prompt = (
+        "你是每日热榜归档助手。只根据给定 title 和 text 写中文摘要，不能补充材料外事实。"
+        "每条摘要不超过30个中文字符；text为空时必须在摘要末尾加(仅据标题)。"
+        "不确定就写(标题已自解释)。只输出JSON对象，键为id字符串，值为摘要。\n"
+        + json.dumps(payload, ensure_ascii=False)
+    )
+    proc = run(["hermes", "chat", "--quiet", "--yolo", "-q", prompt], cwd=REPO, timeout=480)
+    if proc.returncode != 0:
+        return {idx: fallback_summary(item) for idx, item in enumerate(items, start=1)}
+    text = proc.stdout.strip()
+    match = re.search(r"\{[\s\S]*\}", text)
+    if not match:
+        return {idx: fallback_summary(item) for idx, item in enumerate(items, start=1)}
+    try:
+        obj = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return {idx: fallback_summary(item) for idx, item in enumerate(items, start=1)}
+    result: dict[int, str] = {}
+    for idx, item in enumerate(items, start=1):
+        value = str(obj.get(str(idx), "")).strip()
+        result[idx] = value[:60] if value else fallback_summary(item)
+    return result
 
 
-def summarize(item: dict[str, Any]) -> str:
+def fallback_summary(item: dict[str, Any]) -> str:
     title = str(item.get("keyword") or "").strip()
-    url = str(item.get("url") or "").strip()
     if not title:
         return ""
-    text = fetch_text(url)
-    suffix = "" if text else "(仅据标题)"
-    summary = compact_title(title)
-    if len(summary) > 30:
-        summary = summary[:30]
-    if not summary or summary == title:
-        summary = "标题已自解释" if len(title) <= 30 else summary
-    return f"{summary}{suffix}"
+    return "(标题已自解释)" if len(title) <= 30 else f"{title[:30]}(仅据标题)"
 
 
 def render(data: dict[str, Any] | None, error: str = "") -> str:
@@ -100,6 +118,7 @@ def render(data: dict[str, Any] | None, error: str = "") -> str:
         lines.append("今日无热榜条目。")
         return "\n".join(lines) + "\n"
 
+    summaries = summarize_items(merged)
     for idx, item in enumerate(merged, start=1):
         score = item.get("score", "")
         source = item.get("source", "")
@@ -107,7 +126,7 @@ def render(data: dict[str, Any] | None, error: str = "") -> str:
         traffic = str(item.get("traffic") or "").strip()
         url = str(item.get("url") or "").strip()
         lines.append(f"{idx}. [{score}|{source}] {title}")
-        lines.append(f"   摘要：{summarize(item)}")
+        lines.append(f"   摘要：{summaries.get(idx, fallback_summary(item))}")
         lines.append(f"   {traffic} | {url}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
